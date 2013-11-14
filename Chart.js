@@ -343,7 +343,11 @@ window.Chart = function(context){
 			animation : true,
 			animationSteps : 60,
 			animationEasing : "easeOutQuart",
-			onAnimationComplete : null
+			onAnimationComplete : null,
+			showThreshold: false,		// Whether to show the Threshold bar
+			thresholdLevel: 0,			// If showThreshold is true, this is the value to draw the threshold at
+			showHorizontalLabels: true,	// Whether to draw default X-axis labels
+			singleHorizontalLabel: ""	// If showHorizontalLabels is false, then show this single label centered 
 		};		
 		var config = (options) ? mergeChartConfig(chart.Bar.defaults,options) : chart.Bar.defaults;
 		
@@ -1020,7 +1024,19 @@ window.Chart = function(context){
 	
 	var Bar = function(data,config,ctx){
 		var maxSize, scaleHop, calculatedScale, labelHeight, scaleHeight, valueBounds, labelTemplateString, valueHop,widestXLabel, xAxisLength,yAxisPosX,xAxisPosY,barWidth, rotateLabels = 0;
-			
+		
+		// Check threshold isn't outside the range of the scale, if it is move the scale
+		if (config.showThreshold) {
+			// Minimum is quite easy unless the threshold is negative, in which case for now it's just zeroed
+			config.scaleStartValue = Math.max( Math.min( config.scaleStartValue, config.thresholdLevel ), 0);
+			// Maximum isn't so straight forward
+			// If threshold is bigger then make sure we set the max value to eventually be a factor of 10
+			var maxValueTmp = Math.max(config.thresholdLevel, config.scaleStepWidth * config.scaleSteps)
+			var maxValue = (Math.ceil(maxValueTmp / 10) * 10);
+			if (maxValue === maxValueTmp) { maxValue += 10;	}
+			config.scaleStepWidth = maxValue / config.scaleSteps;
+		}
+
 		calculateDrawingSizes();
 		
 		valueBounds = getValueBounds();
@@ -1042,8 +1058,37 @@ window.Chart = function(context){
 		
 		scaleHop = Math.floor(scaleHeight/calculatedScale.steps);
 		calculateXAxisSize();
-		animationLoop(config,drawScale,drawBars,ctx);		
+
+		if (config.showThreshold) {
+			animationLoop(config,drawScale,drawBars,drawThreshold,ctx);
+		} else {
+			animationLoop(config,drawScale,drawBars,null,ctx);
+		}
+
 		
+		/**
+		 *	Addition by Chris Ella
+		 *	I've added this to draw a threshold level on the bar graph
+		 */
+		function drawThreshold(animPc){
+			ctx.lineWidth = 2;
+			var j = calculateOffset(config.thresholdLevel,calculatedScale,scaleHop);
+			j = animPc * j;
+			// Shadow
+			ctx.strokeStyle = "rgba(0,0,0,0.3)";
+			ctx.beginPath();
+			ctx.moveTo(yAxisPosX,				xAxisPosY - j + 2);
+			ctx.lineTo(yAxisPosX + xAxisLength, xAxisPosY - j + 2);
+			ctx.stroke();
+			// Actual line
+			ctx.strokeStyle = "rgba(255,0,0,1)";
+			ctx.beginPath();
+			ctx.moveTo(yAxisPosX,				xAxisPosY - j);
+			ctx.lineTo(yAxisPosX + xAxisLength, xAxisPosY - j);
+			ctx.stroke();
+			ctx.save();
+		}
+
 		function drawBars(animPc){
 			ctx.lineWidth = config.barStrokeWidth;
 			for (var i=0; i<data.datasets.length; i++){
@@ -1076,35 +1121,43 @@ window.Chart = function(context){
 			ctx.stroke();
 			
 			
-			if (rotateLabels > 0){
-				ctx.save();
-				ctx.textAlign = "right";
-			}
-			else{
-				ctx.textAlign = "center";
-			}
-			ctx.fillStyle = config.scaleFontColor;
-			for (var i=0; i<data.labels.length; i++){
-				ctx.save();
+			if (config.showHorizontalLabels) {
 				if (rotateLabels > 0){
-					ctx.translate(yAxisPosX + i*valueHop,xAxisPosY + config.scaleFontSize);
-					ctx.rotate(-(rotateLabels * (Math.PI/180)));
-					ctx.fillText(data.labels[i], 0,0);
-					ctx.restore();
+					ctx.save();
+					ctx.textAlign = "right";
 				}
-				
 				else{
-					ctx.fillText(data.labels[i], yAxisPosX + i*valueHop + valueHop/2,xAxisPosY + config.scaleFontSize+3);					
+					ctx.textAlign = "center";
 				}
+				ctx.fillStyle = config.scaleFontColor;
+				for (var i=0; i<data.labels.length; i++){
+					ctx.save();
+					if (rotateLabels > 0){
+						ctx.translate(yAxisPosX + i*valueHop,xAxisPosY + config.scaleFontSize);
+						ctx.rotate(-(rotateLabels * (Math.PI/180)));
+						ctx.fillText(data.labels[i], 0,0);
+						ctx.restore();
+					}
+					
+					else{
+						ctx.fillText(data.labels[i], yAxisPosX + i*valueHop + valueHop/2,xAxisPosY + config.scaleFontSize+3);					
+					}
 
-				ctx.beginPath();
-				ctx.moveTo(yAxisPosX + (i+1) * valueHop, xAxisPosY+3);
-				
-				//Check i isnt 0, so we dont go over the Y axis twice.
-					ctx.lineWidth = config.scaleGridLineWidth;
-					ctx.strokeStyle = config.scaleGridLineColor;					
-					ctx.lineTo(yAxisPosX + (i+1) * valueHop, 5);
-				ctx.stroke();
+					ctx.beginPath();
+					ctx.moveTo(yAxisPosX + (i+1) * valueHop, xAxisPosY+3);
+					
+					//Check i isnt 0, so we dont go over the Y axis twice.
+						ctx.lineWidth = config.scaleGridLineWidth;
+						ctx.strokeStyle = config.scaleGridLineColor;					
+						ctx.lineTo(yAxisPosX + (i+1) * valueHop, 5);
+					ctx.stroke();
+				}
+			} else {
+				// Show the single Horizonal Label
+				ctx.fillStyle = config.scaleFontColor;
+				ctx.textAlign = "center";
+				ctx.fillText(config.singleHorizontalLabel, yAxisPosX + xAxisLength / 2, xAxisPosY + config.scaleFontSize+3);
+				ctx.save();
 			}
 			
 			//Y axis
@@ -1227,7 +1280,7 @@ window.Chart = function(context){
 		return (scaleHop*calculatedScale.steps) * scalingFactor;
 	}
 	
-	function animationLoop(config,drawScale,drawData,ctx){
+	function animationLoop(config,drawScale,drawData,drawThresh,ctx){
 		var animFrameAmount = (config.animation)? 1/CapValue(config.animationSteps,Number.MAX_VALUE,1) : 1,
 			easingFunction = animationOptions[config.animationEasing],
 			percentAnimComplete =(config.animation)? 0 : 1;
@@ -1235,7 +1288,8 @@ window.Chart = function(context){
 	
 		
 		if (typeof drawScale !== "function") drawScale = function(){};
-		
+		if (typeof drawThresh !== "function") drawThresh = function(val){};
+
 		requestAnimFrame(animLoop);
 		
 		function animateFrame(){
@@ -1244,9 +1298,11 @@ window.Chart = function(context){
 			if(config.scaleOverlay){
 				drawData(easeAdjustedAnimationPercent);
 				drawScale();
+				drawThresh(easeAdjustedAnimationPercent);
 			} else {
 				drawScale();
 				drawData(easeAdjustedAnimationPercent);
+				drawThresh(easeAdjustedAnimationPercent);
 			}				
 		}
 		function animLoop(){
